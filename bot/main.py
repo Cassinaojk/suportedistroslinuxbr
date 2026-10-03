@@ -114,6 +114,10 @@ LINUX_TERMS = (
     "kubernetes", "cloud", "aws", "azure", "google cloud",
     "nvidia", "amd", "intel", "processador", "placa de vídeo",
     "steam", "proton", "gaming", "jogos", "hardware",
+    # Termos em português
+    "sistema", "software", "programa", "atualização", "aplicação",
+    "computador", "pc", "portátil", "servidor", "rede", "internet",
+    "segurança", "privacidade", "dados", "código", "desenvolvedor",
 )
 
 def _tech_norm(value):
@@ -160,6 +164,15 @@ SOURCES = [
         "feeds": [
             "https://www.linuxtoday.com/feed/",
         ],
+    },
+    {
+        "nome": "Pplware - Linux",
+        "url": "https://pplware.sapo.pt/category/linux/",
+        "feeds": [
+            "https://pplware.sapo.pt/feed/",
+        ],
+        "section_only": True,
+        "path_prefix": "/linux/",
     },
 ]
 
@@ -514,6 +527,8 @@ def links(source):
     out = []
     seen = set()
     source_host = urlparse(source["url"]).netloc.lower()
+    section_only = source.get("section_only", False)
+    path_prefix = source.get("path_prefix", "").lower()
 
     def host_matches(u):
         h = urlparse(u).netloc.lower()
@@ -524,6 +539,14 @@ def links(source):
         h_no_www = h.replace("www.", "", 1)
         s_no_www = source_host.replace("www.", "", 1)
         return h_no_www == s_no_www or h_no_www.endswith("." + s_no_www)
+
+    def section_matches(u):
+        if not section_only:
+            return True
+        if not path_prefix:
+            return True
+        path = urlparse(u).path.lower()
+        return path_prefix in path
 
     for feed in source["feeds"]:
         x = soup(feed, True)
@@ -539,6 +562,8 @@ def links(source):
                 continue
             if not host_matches(u):
                 continue
+            if not section_matches(u):
+                continue
             if u not in seen:
                 seen.add(u)
                 out.append(u)
@@ -551,6 +576,8 @@ def links(source):
             if bad_url(u):
                 continue
             if not host_matches(u):
+                continue
+            if not section_matches(u):
                 continue
             if u not in seen:
                 seen.add(u)
@@ -1139,10 +1166,8 @@ def html(article, generated, final_image="", image_origin="", seo=None):
     titulo_exibicao = seo.get("titulo_base") or generated.get("titulo", "")
     safe_title = (
         titulo_exibicao
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
+        .replace("&", "&amp;").replace("<", "&lt;")
+        .replace(">", "&gt;").replace('"', "&quot;")
     )
 
     image_url = final_image or article["image"]
@@ -1150,8 +1175,7 @@ def html(article, generated, final_image="", image_origin="", seo=None):
 
     safe_source_url = (
         article["url"]
-        .replace("&", "&amp;")
-        .replace('"', "&quot;")
+        .replace("&", "&amp;").replace('"', "&quot;")
     )
 
     seo_head = build_seo_head_for_blogger(seo)
@@ -1218,7 +1242,7 @@ def html(article, generated, final_image="", image_origin="", seo=None):
 
 
 def main():
-    print("Fontes: Linux.com + Phoronix + LinuxToday | Tradução automática PT-BR | Sequência de imagens do repositório")
+    print("Fontes: Linux.com + Phoronix + LinuxToday + Pplware Linux | Tradução PT-BR | Sequência de imagens")
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     api = blogger()
     old_blog_urls, old_source_urls = existing(api)
@@ -1279,7 +1303,6 @@ def main():
         final_image, chosen_file = pick_next_image_url(posts_count + published)
         if not final_image:
             print("⚠ Imagem: nenhuma imagem acessível na pasta bot/imagens/.")
-            # Fallback para uma imagem padrão caso a pasta esteja vazia
             final_image = "https://raw.githubusercontent.com/Cassinaojk/suportedistroslinuxbr/main/bot/imagens/Distribui%C3%A7%C3%B5es%20Linux%20(1).png"
             chosen_file = "Distribuições Linux (1).png (fallback)"
 
@@ -1350,6 +1373,6 @@ def main():
     print(f"Falhas: {failed}")
 
 
-print("VERSÃO 1.2 ATIVA: Tradução automática PT-BR | sequência de 12 imagens do repositório | SEO automático | Blogger")
+print("VERSÃO 1.3 ATIVA: Tradução PT-BR | sequência de 12 imagens do repositório | Pplware Linux adicionado | SEO automático | Blogger")
 
 main()
