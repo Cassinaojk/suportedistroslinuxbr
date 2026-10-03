@@ -362,6 +362,37 @@ def videos(x):
 
 
 # ============================================================
+# BUSCA DE IMAGEM POR ASSUNTO (Substitui a imagem original)
+# ============================================================
+
+def get_topic_image(keywords):
+    """
+    Gera uma URL de imagem baseada nas palavras-chave do assunto.
+    Usa o serviço gratuito LoremFlickr (não requer chave de API).
+    """
+    if not keywords:
+        return "https://loremflickr.com/1200/630/linux,technology"
+    
+    # Limpa as palavras-chave para usar na URL
+    valid_kw = []
+    for k in keywords:
+        k = str(k).strip().lower()
+        # Remove acentos e caracteres especiais
+        k = re.sub(r'[^a-z0-9]', '', unicodedata.normalize("NFKD", k).encode("ASCII", "ignore").decode("utf-8"))
+        if k and len(k) > 2:
+            valid_kw.append(k)
+    
+    # Pega no máximo 4 palavras-chave para não poluir a busca
+    valid_kw = valid_kw[:4]
+    
+    if not valid_kw:
+        return "https://loremflickr.com/1200/630/linux,technology"
+    
+    query = ",".join(valid_kw)
+    return f"https://loremflickr.com/1200/630/{quote(query)}"
+
+
+# ============================================================
 # ARTIGO
 # ============================================================
 
@@ -1122,7 +1153,6 @@ def html(article, generated, final_image="", image_origin="", seo=None):
             '</div>'
         )
 
-    # Banner de divulgação do blog (opcional, mas mantido limpo)
     source_marker = f"<!-- SUPORTE_DISTROS_LINUX_BR_SOURCE_URL: {safe_source_url} -->"
     image_marker = ""
     if image_origin:
@@ -1139,7 +1169,7 @@ def html(article, generated, final_image="", image_origin="", seo=None):
 
 
 def main():
-    print("Fontes: Linux.com + Phoronix + LinuxToday | Tradução automática para PT-BR")
+    print("Fontes: Linux.com + Phoronix + LinuxToday | Tradução automática PT-BR | Busca de imagens por assunto")
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     api = blogger()
     old_blog_urls, old_source_urls = existing(api)
@@ -1193,14 +1223,16 @@ def main():
                 break
             continue
 
-        # Usa a imagem original do artigo
-        final_image = article.get("image", "")
-        if not final_image:
-            print("⚠ Imagem: artigo sem imagem original. Publicando sem imagem.")
-            final_image = "https://images.unsplash.com/photo-1629654297299-c8506221ca97?w=1200&h=630&fit=crop"
+        # ===== NOVA LÓGICA DE IMAGEM =====
+        # Pega o assunto principal e as palavras-chave para buscar uma imagem no mesmo tema
+        image_keywords = list(generated.get("palavras_chave", []))
+        if generated.get("assunto_principal"):
+            image_keywords.insert(0, generated.get("assunto_principal"))
         
-        image_origin = "Imagem original da fonte"
+        final_image = get_topic_image(image_keywords)
+        image_origin = f"Busca por assunto: {', '.join(image_keywords[:3])}"
         print(f"✓ Imagem final: {image_origin}")
+        print(f"✓ URL da imagem: {final_image}")
 
         seo = build_seo_payload(
             article=article,
@@ -1265,6 +1297,6 @@ def main():
     print(f"Falhas: {failed}")
 
 
-print("VERSÃO 1.0 ATIVA: Tradução automática PT-BR | imagens e vídeos originais | SEO automático | Blogger")
+print("VERSÃO 1.1 ATIVA: Tradução automática PT-BR | imagens buscadas por assunto | SEO automático | Blogger")
 
 main()
