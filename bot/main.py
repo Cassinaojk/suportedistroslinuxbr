@@ -87,6 +87,22 @@ GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b").strip()
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest").strip()
 AI_PROVIDER_TIMEOUT = int(os.getenv("AI_PROVIDER_TIMEOUT", "90"))
 
+# ===== Sequência de imagens do repositório =====
+IMAGE_FILES = [
+    "bot/imagens/Distribuições Linux (1).png",
+    "bot/imagens/Distribuições Linux (2).png",
+    "bot/imagens/Distribuições Linux (3).png",
+    "bot/imagens/Distribuições Linux (4).png",
+    "bot/imagens/Distribuições Linux (5).png",
+    "bot/imagens/Distribuições Linux (6).png",
+    "bot/imagens/Distribuições Linux (7).png",
+    "bot/imagens/Distribuições Linux (8).png",
+    "bot/imagens/Distribuições Linux (9).png",
+    "bot/imagens/Distribuições Linux (10).png",
+    "bot/imagens/Distribuições Linux (11).png",
+    "bot/imagens/Distribuições Linux (12).png",
+]
+
 # ===== Filtro de Tecnologia/Linux =====
 LINUX_TERMS = (
     "linux", "ubuntu", "fedora", "debian", "arch", "manjaro", "mint",
@@ -362,34 +378,67 @@ def videos(x):
 
 
 # ============================================================
-# BUSCA DE IMAGEM POR ASSUNTO (Substitui a imagem original)
+# SEQUÊNCIA DE IMAGENS DO REPOSITÓRIO
 # ============================================================
 
-def get_topic_image(keywords):
-    """
-    Gera uma URL de imagem baseada nas palavras-chave do assunto.
-    Usa o serviço gratuito LoremFlickr (não requer chave de API).
-    """
-    if not keywords:
-        return "https://loremflickr.com/1200/630/linux,technology"
+def resolve_repo_image_url(relative_path):
+    """Monta a URL direta para a imagem no repositório do GitHub."""
+    if not relative_path:
+        return ""
     
-    # Limpa as palavras-chave para usar na URL
-    valid_kw = []
-    for k in keywords:
-        k = str(k).strip().lower()
-        # Remove acentos e caracteres especiais
-        k = re.sub(r'[^a-z0-9]', '', unicodedata.normalize("NFKD", k).encode("ASCII", "ignore").decode("utf-8"))
-        if k and len(k) > 2:
-            valid_kw.append(k)
+    repository = os.getenv("GITHUB_REPOSITORY", "Cassinaojk/suportedistroslinuxbr")
+    branch = os.getenv("GITHUB_REF_NAME", "main") or "main"
     
-    # Pega no máximo 4 palavras-chave para não poluir a busca
-    valid_kw = valid_kw[:4]
+    # Codifica o caminho para lidar com espaços e acentos
+    path_encoded = quote(relative_path, safe="/")
     
-    if not valid_kw:
-        return "https://loremflickr.com/1200/630/linux,technology"
-    
-    query = ",".join(valid_kw)
-    return f"https://loremflickr.com/1200/630/{quote(query)}"
+    # Usa o raw.githubusercontent.com que é mais rápido e confiável
+    url = f"https://raw.githubusercontent.com/{repository}/{branch}/{path_encoded}"
+    return url
+
+
+def count_bot_posts(api):
+    """Conta quantos posts o robô já publicou para saber qual imagem usar."""
+    count = 0
+    token = None
+    try:
+        while True:
+            kwargs = {
+                "blogId": BLOGGER_BLOG_ID,
+                "maxResults": 500,
+                "fetchBodies": True,
+            }
+            if token:
+                kwargs["pageToken"] = token
+            data = api.posts().list(**kwargs).execute()
+            for post in data.get("items", []):
+                content = post.get("content", "") or ""
+                # Conta apenas posts que têm o marcador do robô
+                if "SUPORTE_DISTROS_LINUX_BR_SOURCE_URL:" in content:
+                    count += 1
+            token = data.get("nextPageToken")
+            if not token:
+                break
+    except Exception as e:
+        print("Erro ao contar posts do robô:", e)
+    print(f"Posts do robô já publicados: {count}")
+    return count
+
+
+def pick_next_image_url(posts_count):
+    """Escolhe a próxima imagem da sequência cíclica (1 a 12)."""
+    if not IMAGE_FILES:
+        return "", ""
+    total = len(IMAGE_FILES)
+    start_idx = posts_count % total
+
+    for offset in range(total):
+        idx = (start_idx + offset) % total
+        rel = IMAGE_FILES[idx]
+        url = resolve_repo_image_url(rel)
+        if url:
+            return url, rel
+    return "", ""
 
 
 # ============================================================
@@ -1169,10 +1218,13 @@ def html(article, generated, final_image="", image_origin="", seo=None):
 
 
 def main():
-    print("Fontes: Linux.com + Phoronix + LinuxToday | Tradução automática PT-BR | Busca de imagens por assunto")
+    print("Fontes: Linux.com + Phoronix + LinuxToday | Tradução automática PT-BR | Sequência de imagens do repositório")
     gemini_client = genai.Client(api_key=GEMINI_API_KEY)
     api = blogger()
     old_blog_urls, old_source_urls = existing(api)
+    
+    # Conta quantos posts o robô já fez para saber qual imagem usar
+    posts_count = count_bot_posts(api)
 
     candidates = []
     candidate_urls = set()
@@ -1223,14 +1275,15 @@ def main():
                 break
             continue
 
-        # ===== NOVA LÓGICA DE IMAGEM =====
-        # Pega o assunto principal e as palavras-chave para buscar uma imagem no mesmo tema
-        image_keywords = list(generated.get("palavras_chave", []))
-        if generated.get("assunto_principal"):
-            image_keywords.insert(0, generated.get("assunto_principal"))
-        
-        final_image = get_topic_image(image_keywords)
-        image_origin = f"Busca por assunto: {', '.join(image_keywords[:3])}"
+        # ===== NOVA LÓGICA DE IMAGEM (Sequência do Repositório) =====
+        final_image, chosen_file = pick_next_image_url(posts_count + published)
+        if not final_image:
+            print("⚠ Imagem: nenhuma imagem acessível na pasta bot/imagens/.")
+            # Fallback para uma imagem padrão caso a pasta esteja vazia
+            final_image = "https://raw.githubusercontent.com/Cassinaojk/suportedistroslinuxbr/main/bot/imagens/Distribui%C3%A7%C3%B5es%20Linux%20(1).png"
+            chosen_file = "Distribuições Linux (1).png (fallback)"
+
+        image_origin = f"Sequência do repositório: {chosen_file}"
         print(f"✓ Imagem final: {image_origin}")
         print(f"✓ URL da imagem: {final_image}")
 
@@ -1297,6 +1350,6 @@ def main():
     print(f"Falhas: {failed}")
 
 
-print("VERSÃO 1.1 ATIVA: Tradução automática PT-BR | imagens buscadas por assunto | SEO automático | Blogger")
+print("VERSÃO 1.2 ATIVA: Tradução automática PT-BR | sequência de 12 imagens do repositório | SEO automático | Blogger")
 
 main()
