@@ -47,7 +47,7 @@ from google import genai
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-print("SUPORTE DISTROS LINUX BR - ROBÔ DE NOTÍCIAS 1.0 (SEO Automático)")
+print("SUPORTE DISTROS LINUX BR - ROBÔ DE NOTÍCIAS 1.4 (Apenas 1 imagem extra: og:image da origem, após o 2º parágrafo)")
 
 BLOGGER_BLOG_ID = os.environ["BLOGGER_BLOG_ID"]
 GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
@@ -114,7 +114,6 @@ LINUX_TERMS = (
     "kubernetes", "cloud", "aws", "azure", "google cloud",
     "nvidia", "amd", "intel", "processador", "placa de vídeo",
     "steam", "proton", "gaming", "jogos", "hardware",
-    # Termos em português
     "sistema", "software", "programa", "atualização", "aplicação",
     "computador", "pc", "portátil", "servidor", "rede", "internet",
     "segurança", "privacidade", "dados", "código", "desenvolvedor",
@@ -208,7 +207,7 @@ VIDEO_HOSTS = (
 )
 
 s = requests.Session()
-s.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SuporteDistrosLinuxBot/1.0)"})
+s.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SuporteDistrosLinuxBot/1.4)"})
 
 gemini_calls = 0
 gemini_quota_hit = False
@@ -319,31 +318,21 @@ def article_date(x):
 
 
 def image_original(x):
-    values = []
+    """Extrai APENAS a imagem de destaque (og:image) da postagem original."""
     for sel in (
         'meta[property="og:image"]',
+        'meta[property="og:image:secure_url"]',
         'meta[name="twitter:image"]',
+        'meta[name="twitter:image:src"]',
         'meta[itemprop="image"]',
     ):
         n = x.select_one(sel)
-        if n and n.get("content"):
-            values.append(n["content"])
-    for sel in (
-        "article img", ".entry-content img", ".post-content img",
-        ".td-post-content img", "main img",
-    ):
-        for n in x.select(sel)[:10]:
-            values.append(
-                n.get("src") or n.get("data-src") or n.get("data-lazy-src") or ""
-            )
-    for u in values:
-        u = u.strip()
-        if u.startswith("//"):
-            u = "https:" + u
-        if u.startswith(("http://", "https://")) and not any(
-            z in u.lower() for z in ("logo", "avatar", "icon", "favicon")
-        ):
-            return u
+        if n:
+            u = (n.get("content") or "").strip()
+            if u.startswith("//"):
+                u = "https:" + u
+            if u.startswith(("http://", "https://")):
+                return u
     return ""
 
 
@@ -508,10 +497,20 @@ def get_article(url):
         return None
 
     vv = videos(x)
+
+    # ÚNICA imagem inline permitida: a og:image da origem, sempre em after_paragraph=2
+    inline_imgs = []
+    if img:
+        inline_imgs = [{"url": img, "after_paragraph": 2, "is_main": True}]
+
     print("Notícia encontrada:", title)
     print("Texto extraído:", len(text), "caracteres")
     if vv:
         print(f"Vídeos válidos encontrados: {len(vv)}")
+    if inline_imgs:
+        print(f"✓ Imagem de destaque da origem será inserida após o 2º parágrafo: {img[:90]}")
+    else:
+        print("⚠ Postagem original sem og:image — post seguirá sem imagem no corpo.")
 
     return {
         "url": normalize_url(url),
@@ -520,6 +519,7 @@ def get_article(url):
         "image": img,
         "text": text[:16000],
         "videos": vv,
+        "inline_images": inline_imgs,
     }
 
 
@@ -1161,6 +1161,34 @@ def build_seo_head_for_blogger(seo):
 # HTML DO POST
 # ============================================================
 
+def _render_inline_image_html(img_url, alt_text):
+    """Renderiza uma imagem inline CENTRALIZADA no corpo do post."""
+    safe_img = (
+        (img_url or "")
+        .replace("&", "&amp;")
+        .replace('"', "&quot;")
+    )
+    safe_alt = (
+        (alt_text or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+    )
+    if not safe_img:
+        return ""
+    return (
+        '<p style="text-align:center;margin:24px 0;">'
+        f'<img src="{safe_img}" '
+        f'alt="{safe_alt}" '
+        f'title="{safe_alt}" '
+        'style="max-width:100%;height:auto;border-radius:12px;'
+        'box-shadow:0 4px 12px rgba(0,0,0,0.10);'
+        'display:block;margin-left:auto;margin-right:auto;">'
+        '</p>'
+    )
+
+
 def html(article, generated, final_image="", image_origin="", seo=None):
     seo = seo or {}
     titulo_exibicao = seo.get("titulo_base") or generated.get("titulo", "")
@@ -1203,8 +1231,39 @@ def html(article, generated, final_image="", image_origin="", seo=None):
         if paragraph:
             article_paragraphs.append(paragraph)
 
-    for index, paragraph in enumerate(article_paragraphs):
-        content.append(f"<p>{paragraph}</p>")
+    # --- corpo da matéria com a ÚNICA imagem inline intercalada (após o 2º parágrafo) ---
+    inline_images = list(article.get("inline_images") or [])
+    inline_images = inline_images[:1] # Garantia: apenas uma imagem
+    inline_images.sort(key=lambda item: item.get("after_paragraph", 9999))
+
+    body_parts = []
+    para_idx = 0
+    total_paras = len(article_paragraphs)
+
+    for img_info in inline_images:
+        target = img_info.get("after_paragraph", 9999)
+        try:
+            target = int(target)
+        except Exception:
+            target = 9999
+        if target < 0:
+            target = 0
+        if target > total_paras:
+            target = total_paras
+
+        while para_idx < target:
+            body_parts.append(f"<p>{article_paragraphs[para_idx]}</p>")
+            para_idx += 1
+
+        rendered = _render_inline_image_html(img_info.get("url", ""), titulo_exibicao)
+        if rendered:
+            body_parts.append(rendered)
+
+    while para_idx < total_paras:
+        body_parts.append(f"<p>{article_paragraphs[para_idx]}</p>")
+        para_idx += 1
+
+    content.extend(body_parts)
 
     for video_url in article["videos"]:
         content.append(
@@ -1373,6 +1432,6 @@ def main():
     print(f"Falhas: {failed}")
 
 
-print("VERSÃO 1.3 ATIVA: Tradução PT-BR | sequência de 12 imagens do repositório | Pplware Linux adicionado | SEO automático | Blogger")
+print("VERSÃO 1.4 ATIVA: Tradução PT-BR | sequência de 12 imagens do repositório | apenas 1 imagem extra da origem (após o 2º parágrafo) | SEO automático | Blogger")
 
 main()
